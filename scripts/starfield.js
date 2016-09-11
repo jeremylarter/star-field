@@ -22,7 +22,7 @@
                 return Rx.Observable.interval(speed)
                     .map(function () {
                         starArray.forEach(function (star) {
-                            if (star.y >= canvasWidth) {
+                            if (star.y >= canvasHeight) {
                                 star.y = 0;
                             }
                             star.y += star.size;
