@@ -97,9 +97,10 @@
             .combineLatest(spaceShipPosition, bulletFiredStream, function (spaceShipPosition, bulletFiredStream) {
                 return {
                     timestamp: bulletFiredStream.timestamp,
-                    x: spaceShipPosition.x};
+                    x: spaceShipPosition.x
+                };
             })
-            .distinctUntilChanged(function (bullet) { 
+            .distinctUntilChanged(function (bullet) {
                 return bullet.timestamp;
             })
             .scan(function (bulletArray, bullet) {
@@ -110,13 +111,18 @@
         game = Rx.Observable
             .combineLatest(starStream, enemyStream, bulletStream, spaceShipPosition, function (starArray, enemyArray, bulletArray, spaceShipPosition) {
                 //todo: there seems to be a lot of duplication here, can it be simplified?
+                var numberOfBullets = bulletArray.length;
+                //todo: this does not release memory taken in bulletStream, maybe use flatMapLatest()?
+                bulletArray = bulletArray.filter(function (bullet) {
+                    return bullet.y > canvasHeight / 2;
+                });
                 return {
                     starArray: starArray,
                     enemyArray: enemyArray,
                     bulletArray: bulletArray,
                     spaceShipPosition: spaceShipPosition,
                     context: context,
-                    debug: spaceShipPosition.x
+                    debug: numberOfBullets//spaceShipPosition.x
                 };
             });
 
@@ -193,4 +199,4 @@
     canvas.width = canvasWidth;
     canvas.height = canvasHeight;
     document.body.appendChild(canvas);
-} (window, document, Rx));
+}(window, document, Rx));
