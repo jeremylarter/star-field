@@ -16,22 +16,19 @@
             enemyArray: {
                 rate: 1500
             },
-            spaceShipPosition: {
-                start: {
-                    x: canvasWidth / 2,
-                    y: canvasHeight - 30
+            spaceShip: {
+                position: {
+                    start: {
+                        x: canvasWidth / 2,
+                        y: canvasHeight - 30
+                    }
+                },
+                fireRate: 200,
+                bullet: {
+                    speed: 15
                 }
             }
         },
-        mouseMove = Rx.Observable.fromEvent(canvas, "mousemove"),
-        spaceShipPosition = mouseMove
-            .map(function (event) {
-                return {
-                    x: event.clientX,
-                    y: options.spaceShipPosition.start.y
-                };
-            })
-            .startWith(options.spaceShipPosition.start),
 
         starStream = Rx.Observable.range(1, options.starArray.number)
             .map(function () {
@@ -76,40 +73,52 @@
                 return enemyArray;
             }, []),
 
+        mouseMove = Rx.Observable.fromEvent(canvas, "mousemove"),
+        spaceShipPosition = mouseMove
+            .map(function (event) {
+                return {
+                    x: event.clientX,
+                    y: options.spaceShip.position.start.y
+                };
+            })
+            .startWith(options.spaceShip.position.start),
+
+        canvasClick = Rx.Observable.fromEvent(canvas, "click"),
+        spaceBarKeyDown = Rx.Observable.fromEvent(window, "keydown")
+            .filter(function (event) {
+                //console.log(event.keyCode);
+                return event.keyCode === 32;
+            }),
+        bulletFiredStream = Rx.Observable.merge(canvasClick, spaceBarKeyDown)
+            .startWith({})
+            .sample(options.spaceShip.fireRate)
+            .timestamp(),
+        bulletStream = Rx.Observable
+            .combineLatest(spaceShipPosition, bulletFiredStream, function (spaceShipPosition, bulletFiredStream) {
+                return {
+                    timestamp: bulletFiredStream.timestamp,
+                    x: spaceShipPosition.x};
+            })
+            .distinctUntilChanged(function (bullet) { 
+                return bullet.timestamp;
+            })
+            .scan(function (bulletArray, bullet) {
+                bulletArray.push({x: bullet.x, y: options.spaceShip.position.start.y});
+                return bulletArray;
+            }, []),
+
         game = Rx.Observable
-            .combineLatest(starStream, enemyStream, spaceShipPosition, function (starArray, enemyArray, spaceShipPosition) {
+            .combineLatest(starStream, enemyStream, bulletStream, spaceShipPosition, function (starArray, enemyArray, bulletArray, spaceShipPosition) {
                 //todo: there seems to be a lot of duplication here, can it be simplified?
                 return {
                     starArray: starArray,
                     enemyArray: enemyArray,
+                    bulletArray: bulletArray,
                     spaceShipPosition: spaceShipPosition,
                     context: context,
                     debug: spaceShipPosition.x
                 };
             });
-
-    // function Star(x, y, size) {
-    //     this.x = x;
-    //     this.y = y;
-    //     this.grow = true;
-    //     this.size = size;
-    // }
-
-    // Star.prototype.pulse = function () {
-    //     var this = self;
-    //     if (star.grow) {
-    //         star.size += 0.01;
-    //     } else {
-    //         star.size -= 0.1;
-    //     }
-    //     if (star.size > 6) {
-    //         star.grow = false;
-    //     }
-    //     if (star.size < 1) {
-    //         star.grow = true;
-    //     }
-
-    // }
 
     function drawTriangle(x, y, width, color, pointUp, context) {
         var triangleHeight = pointUp
@@ -124,9 +133,10 @@
         context.lineTo(x - width, y);
         context.fill();
     }
+
     function paintBackground(context) {
         context.fillStyle = "#000000";
-        context.fillRect(0, 0, canvasWidth, canvasHeight);        
+        context.fillRect(0, 0, canvasWidth, canvasHeight);
     }
 
     function paintStars(starArray, context) {
@@ -147,6 +157,12 @@
         });
     }
 
+    function paintBullets(bulletArray, context) {
+        bulletArray.forEach(function (bullet) {
+            bullet.y -= options.spaceShip.bullet.speed;
+            drawTriangle(bullet.x, bullet.y, 5, "#ffff00", true, context);
+        });
+    }
     function paintSpaceShip(position, context) {
         drawTriangle(position.x, position.y, 20, "#ff0000", true, context);
     }
@@ -161,6 +177,7 @@
         paintBackground(context);
         paintStars(actors.starArray, actors.context);
         paintEnemies(actors.enemyArray, actors.context);
+        paintBullets(actors.bulletArray, actors.context);
         paintSpaceShip(actors.spaceShipPosition, actors.context);
         paintScore(actors.debug, actors.context);
     }
@@ -169,7 +186,9 @@
     //     paintStars(starArray, context);
     // });
 
-    game.subscribe(renderScene);
+    game
+        .sample(options.starArray.speed)
+        .subscribe(renderScene);
 
     canvas.width = canvasWidth;
     canvas.height = canvasHeight;
