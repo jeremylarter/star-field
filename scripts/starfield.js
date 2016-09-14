@@ -23,9 +23,12 @@
                         y: canvasHeight - 30
                     }
                 },
-                fireRate: 200,
-                bullet: {
+                firing: {
+                    rate: 200,
                     speed: 15
+                },
+                bulletArray: {
+                    number: 250
                 }
             }
         },
@@ -91,7 +94,7 @@
             }),
         bulletFiredStream = Rx.Observable.merge(canvasClick, spaceBarKeyDown)
             .startWith({})
-            .sample(options.spaceShip.fireRate)
+            .sample(options.spaceShip.firing.rate)
             .timestamp(),
         bulletStream = Rx.Observable
             .combineLatest(spaceShipPosition, bulletFiredStream, function (spaceShipPosition, bulletFiredStream) {
@@ -104,25 +107,29 @@
                 return bullet.timestamp;
             })
             .scan(function (bulletArray, bullet) {
-                bulletArray.push({x: bullet.x, y: options.spaceShip.position.start.y});
+                //todo: why does a single bullet always fire on page load?
+                bulletArray.push({x: bullet.x, y: options.spaceShip.position.start.y, timestamp: bullet.timestamp, live: true});
+                if (bulletArray.length > options.spaceShip.bulletArray.number) {
+                    //It seems wrong to push on an array for an infinite stream without allowing any garbage collection, so we remove the oldest bullet.
+                    //it would also be weird if bullets eventually overflowed float and wrapped around in the world to have another shot as the come back to the screen coordinates.
+                    //todo: it would be interesting to profile memory usage without this step.
+                    bulletArray.shift();
+                }
                 return bulletArray;
             }, []),
 
         game = Rx.Observable
             .combineLatest(starStream, enemyStream, bulletStream, spaceShipPosition, function (starArray, enemyArray, bulletArray, spaceShipPosition) {
                 //todo: there seems to be a lot of duplication here, can it be simplified?
-                var numberOfBullets = bulletArray.length;
-                //todo: this does not release memory taken in bulletStream, maybe use flatMapLatest()?
-                bulletArray = bulletArray.filter(function (bullet) {
-                    return bullet.y > canvasHeight / 2;
-                });
+                var debug = "" + (bulletArray.length ? bulletArray[bulletArray.length - 1].timestamp : "0");
+                debug += "\r\nbulletArray.length = " + bulletArray.length;
                 return {
                     starArray: starArray,
                     enemyArray: enemyArray,
                     bulletArray: bulletArray,
                     spaceShipPosition: spaceShipPosition,
                     context: context,
-                    debug: numberOfBullets//spaceShipPosition.x
+                    debug: debug
                 };
             });
 
@@ -165,8 +172,14 @@
 
     function paintBullets(bulletArray, context) {
         bulletArray.forEach(function (bullet) {
-            bullet.y -= options.spaceShip.bullet.speed;
-            drawTriangle(bullet.x, bullet.y, 5, "#ffff00", true, context);
+            if (bullet.live) {
+                bullet.y -= options.spaceShip.firing.speed;//todo: convert this to frames per second so the refresh is smooth.
+                //todo: replace magic number for screen top = 0
+                if (bullet.y < 0) {
+                    bullet.live = false;
+                }
+                drawTriangle(bullet.x, bullet.y, 5, "#ffff00", true, context);
+            }
         });
     }
     function paintSpaceShip(position, context) {
@@ -199,4 +212,4 @@
     canvas.width = canvasWidth;
     canvas.height = canvasHeight;
     document.body.appendChild(canvas);
-}(window, document, Rx));
+} (window, document, Rx));
