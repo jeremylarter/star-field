@@ -14,7 +14,8 @@
                 number: 250
             },
             enemyArray: {
-                rate: 1500
+                rate: 1500,
+                boundingBoxSize: 25
             },
             spaceShip: {
                 position: {
@@ -71,7 +72,9 @@
             .scan(function (enemyArray) {
                 enemyArray.push({
                     x: Math.random() * canvasWidth,
-                    y: canvasHeight / 2
+                    y: canvasHeight / 2,
+                    alive: true,
+                    value: 5
                 });
                 return enemyArray;
             }, []),
@@ -118,8 +121,14 @@
                 return bulletArray;
             }, []),
 
+        scoreSubject = new Rx.BehaviorSubject(0),
+        score = scoreSubject
+            .scan(function (previous, current) {
+                return previous + current;
+            }, 0),
+
         game = Rx.Observable
-            .combineLatest(starStream, enemyStream, bulletStream, spaceShipPosition, function (starArray, enemyArray, bulletArray, spaceShipPosition) {
+            .combineLatest(starStream, enemyStream, bulletStream, spaceShipPosition, score, function (starArray, enemyArray, bulletArray, spaceShipPosition, score) {
                 //todo: there seems to be a lot of duplication here, can it be simplified?
                 var debug = "" + (bulletArray.length ? bulletArray[bulletArray.length - 1].timestamp : "0");
                 debug += "\r\nbulletArray.length = " + bulletArray.length;
@@ -128,6 +137,7 @@
                     enemyArray: enemyArray,
                     bulletArray: bulletArray,
                     spaceShipPosition: spaceShipPosition,
+                    score: score,
                     context: context,
                     debug: debug
                 };
@@ -162,15 +172,22 @@
 
     function paintEnemies(enemyArray, context) {
         enemyArray.forEach(function (enemy) {
-            if (enemy.y > canvasHeight) {
-                enemy.y = -50;
+            if (enemy.alive) {
+                if (enemy.y > canvasHeight) {
+                    enemy.y = -50;
+                }
+                enemy.y += 0.5;
+                drawTriangle(enemy.x, enemy.y, 25, "#00ff00", false, context);
             }
-            enemy.y += 0.5;
-            drawTriangle(enemy.x, enemy.y, 25, "#00ff00", false, context);
         });
     }
 
-    function paintBullets(bulletArray, context) {
+    function collision(enemy, bullet, boundingBoxSize) {
+        return (enemy.x > bullet.x - boundingBoxSize && enemy.x < bullet.x + boundingBoxSize) &&
+                (enemy.y > bullet.y - boundingBoxSize && enemy.y < bullet.y + boundingBoxSize);
+    }
+
+    function paintBullets(bulletArray, enemyArray, scoreSubject, context) {
         bulletArray.forEach(function (bullet) {
             if (bullet.live) {
                 bullet.y -= options.spaceShip.firing.speed;//todo: convert this to frames per second so the refresh is smooth.
@@ -179,9 +196,18 @@
                     bullet.live = false;
                 }
                 drawTriangle(bullet.x, bullet.y, 5, "#ffff00", true, context);
+
+                enemyArray.forEach(function (enemy) {
+                    if (enemy.alive && collision(enemy, bullet, options.enemyArray.boundingBoxSize)) {
+                        enemy.alive = false;
+                        bullet.live = false;
+                        scoreSubject.onNext(enemy.value);
+                    }
+                });
             }
         });
     }
+
     function paintSpaceShip(position, context) {
         drawTriangle(position.x, position.y, 20, "#ff0000", true, context);
     }
@@ -196,14 +222,10 @@
         paintBackground(context);
         paintStars(actors.starArray, actors.context);
         paintEnemies(actors.enemyArray, actors.context);
-        paintBullets(actors.bulletArray, actors.context);
+        paintBullets(actors.bulletArray, actors.enemyArray, scoreSubject, actors.context);
         paintSpaceShip(actors.spaceShipPosition, actors.context);
-        paintScore(actors.debug, actors.context);
+        paintScore(actors.score, actors.context);
     }
-
-    // starStream.subscribe(function (starArray) {
-    //     paintStars(starArray, context);
-    // });
 
     game
         .sample(options.starArray.speed)
@@ -212,4 +234,4 @@
     canvas.width = canvasWidth;
     canvas.height = canvasHeight;
     document.body.appendChild(canvas);
-} (window, document, Rx));
+}(window, document, Rx));
