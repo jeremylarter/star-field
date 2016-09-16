@@ -8,6 +8,7 @@
         canvas = document.createElement("canvas"),
         context = canvas.getContext("2d"),
 
+        //todo: make options a behavior subject so they can change with the game state over time
         options = {
             starArray: {
                 speed: 40,
@@ -16,6 +17,13 @@
             enemyArray: {
                 rate: 1500,
                 boundingBoxSize: 25
+            },
+            enemyBulletArray: {
+                rate: 1500,
+                number: 100,
+                firing: {
+                    speed: 12
+                }
             },
             spaceShip: {
                 position: {
@@ -30,10 +38,29 @@
                 },
                 bulletArray: {
                     number: 250
-                }
+                },
+                boundingBoxSize: 20
             }
         },
 
+        starBehavior = function (star) {
+            if (star.y >= canvasHeight) {
+                star.y = 0;
+            }
+            star.y += star.size;
+            if (star.grow) {
+                star.size += 0.01;
+            } else {
+                star.size -= 0.1;
+            }
+            if (star.size > 6) {
+                star.grow = false;
+            }
+            if (star.size < 1) {
+                star.grow = true;
+            }
+        },
+        //todo: wrap and inject all instances of functions with side effects such as Math.random, keyboard and mouse input
         starStream = Rx.Observable.range(1, options.starArray.number)
             .map(function () {
                 return {
@@ -47,23 +74,7 @@
             .flatMap(function (starArray) {
                 return Rx.Observable.interval(options.starArray.speed)
                     .map(function () {
-                        starArray.forEach(function (star) {
-                            if (star.y >= canvasHeight) {
-                                star.y = 0;
-                            }
-                            star.y += star.size;
-                            if (star.grow) {
-                                star.size += 0.01;
-                            } else {
-                                star.size -= 0.1;
-                            }
-                            if (star.size > 6) {
-                                star.grow = false;
-                            }
-                            if (star.size < 1) {
-                                star.grow = true;
-                            }
-                        });
+                        starArray.forEach(starBehavior);
                         return starArray;
                     });
             }),
@@ -79,8 +90,20 @@
                 return enemyArray;
             }, []),
 
+        enemyBulletStream = Rx.Observable.interval(options.enemyBulletArray.rate)
+            .scan(function (enemyBulletArray) {
+                enemyBulletArray.push({
+                    live: true,
+                    fired: false
+                });
+                if (enemyBulletArray.length > options.enemyBulletArray.number) {
+                    enemyBulletArray.shift();
+                }
+                return enemyBulletArray;
+            }, []),
+
         mouseMove = Rx.Observable.fromEvent(canvas, "mousemove"),
-        spaceShipPosition = mouseMove
+        spaceShipPositionStream = mouseMove
             .map(function (event) {
                 return {
                     x: event.clientX,
@@ -92,7 +115,6 @@
         canvasClick = Rx.Observable.fromEvent(canvas, "click"),
         spaceBarKeyDown = Rx.Observable.fromEvent(window, "keydown")
             .filter(function (event) {
-                //console.log(event.keyCode);
                 return event.keyCode === 32;
             }),
         bulletFiredStream = Rx.Observable.merge(canvasClick, spaceBarKeyDown)
@@ -100,9 +122,9 @@
             .sample(options.spaceShip.firing.rate)
             .timestamp(),
         bulletStream = Rx.Observable
-            .combineLatest(spaceShipPosition, bulletFiredStream, function (spaceShipPosition, bulletFiredStream) {
+            .combineLatest(spaceShipPositionStream, bulletFiredStream, function (spaceShipPosition, bulletFired) {
                 return {
-                    timestamp: bulletFiredStream.timestamp,
+                    timestamp: bulletFired.timestamp,
                     x: spaceShipPosition.x
                 };
             })
@@ -113,35 +135,30 @@
                 //todo: why does a single bullet always fire on page load?
                 bulletArray.push({x: bullet.x, y: options.spaceShip.position.start.y, timestamp: bullet.timestamp, live: true});
                 if (bulletArray.length > options.spaceShip.bulletArray.number) {
-                    //It seems wrong to push on an array for an infinite stream without allowing any garbage collection, so we remove the oldest bullet.
-                    //it would also be weird if bullets eventually overflowed float and wrapped around in the world to have another shot as the come back to the screen coordinates.
-                    //todo: it would be interesting to profile memory usage without this step.
                     bulletArray.shift();
                 }
                 return bulletArray;
             }, []),
 
         scoreSubject = new Rx.BehaviorSubject(0),
-        score = scoreSubject
+        scoreStream = scoreSubject
             .scan(function (previous, current) {
                 return previous + current;
             }, 0),
 
-        game = Rx.Observable
-            .combineLatest(starStream, enemyStream, bulletStream, spaceShipPosition, score, function (starArray, enemyArray, bulletArray, spaceShipPosition, score) {
-                //todo: there seems to be a lot of duplication here, can it be simplified?
-                var debug = "" + (bulletArray.length ? bulletArray[bulletArray.length - 1].timestamp : "0");
-                debug += "\r\nbulletArray.length = " + bulletArray.length;
-                return {
-                    starArray: starArray,
-                    enemyArray: enemyArray,
-                    bulletArray: bulletArray,
-                    spaceShipPosition: spaceShipPosition,
-                    score: score,
-                    context: context,
-                    debug: debug
-                };
-            });
+        gameStreamArray = [starStream, enemyStream, enemyBulletStream, bulletStream, spaceShipPositionStream, scoreStream],
+        gameCombineLatest = function (starArray, enemyArray, enemyBulletArray, bulletArray, spaceShipPosition, score) {
+            return {
+                starArray: starArray,
+                enemyArray: enemyArray,
+                enemyBulletArray: enemyBulletArray,
+                bulletArray: bulletArray,
+                spaceShipPosition: spaceShipPosition,
+                score: score,
+                context: context
+            };
+        },
+        game = Rx.Observable.combineLatest(gameStreamArray, gameCombineLatest);
 
     function drawTriangle(x, y, width, color, pointUp, context) {
         var triangleHeight = pointUp
@@ -170,13 +187,32 @@
         });
     }
 
-    function paintEnemies(enemyArray, context) {
+    function fireAtWill(enemy, bullet) {
+        bullet.x = enemy.x;
+        bullet.y = enemy.y;
+        bullet.fired = true;
+    }
+
+    function decideToFire(chance) {
+        return Math.random() < chance;
+    }
+
+    function paintEnemies(enemyArray, enemyBulletArray, context) {
         enemyArray.forEach(function (enemy) {
+            var bulletClip = enemyBulletArray.filter(function (bullet) {
+                return bullet.live && !bullet.fired;
+            });
+
             if (enemy.alive) {
                 if (enemy.y > canvasHeight) {
                     enemy.y = -50;
                 }
                 enemy.y += 0.5;
+
+                if (bulletClip.length && decideToFire(0.1)) {
+                    fireAtWill(enemy, bulletClip[0]);
+                }
+
                 drawTriangle(enemy.x, enemy.y, 25, "#00ff00", false, context);
             }
         });
@@ -185,6 +221,23 @@
     function collision(enemy, bullet, boundingBoxSize) {
         return (enemy.x > bullet.x - boundingBoxSize && enemy.x < bullet.x + boundingBoxSize) &&
                 (enemy.y > bullet.y - boundingBoxSize && enemy.y < bullet.y + boundingBoxSize);
+    }
+
+    function paintEnemyBullets(enemyBulletArray, spaceShipPosition, scoreSubject, context) {
+        enemyBulletArray.forEach(function (bullet) {
+            if (bullet.live && bullet.fired) {
+                bullet.y += options.enemyBulletArray.firing.speed;
+                if (bullet.y > canvasHeight) {
+                    bullet.live = false;
+                }
+                drawTriangle(bullet.x, bullet.y, 10, "#ff1122", false, context);
+
+                if (collision(spaceShipPosition, bullet, options.spaceShip.boundingBoxSize)) {
+                    bullet.live = false;
+                    scoreSubject.onNext(-100);
+                }
+            }
+        });
     }
 
     function paintBullets(bulletArray, enemyArray, scoreSubject, context) {
@@ -221,7 +274,8 @@
     function renderScene(actors) {
         paintBackground(context);
         paintStars(actors.starArray, actors.context);
-        paintEnemies(actors.enemyArray, actors.context);
+        paintEnemies(actors.enemyArray, actors.enemyBulletArray, actors.context);
+        paintEnemyBullets(actors.enemyBulletArray, actors.spaceShipPosition, scoreSubject, actors.context);
         paintBullets(actors.bulletArray, actors.enemyArray, scoreSubject, actors.context);
         paintSpaceShip(actors.spaceShipPosition, actors.context);
         paintScore(actors.score, actors.context);
