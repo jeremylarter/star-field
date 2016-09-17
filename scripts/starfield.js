@@ -1,16 +1,13 @@
 /*jslint browser:true */
 /*global window, Rx, Random*/
 
-//injected library functions and objects that cause side effects in order to create good test seams
-var StarField = {};
-
-//StarField.getRandom = Random.getRandom;
-StarField.getRandom = Math.random;
-
-(function (window, document, Rx, getRandom) {
+(function (window, document, Rx, Random) {
     "use strict";
 
-    var canvasWidth = window.innerWidth,
+    var getRandom = Random.getRandom,
+        // getRandom = Math.random,
+        randomObservable = Random.randomObservable,
+        canvasWidth = window.innerWidth,
         canvasHeight = window.innerHeight,
         canvas = document.createElement("canvas"),
 
@@ -68,19 +65,32 @@ StarField.getRandom = Math.random;
                 star.grow = true;
             }
         },
-        //todo: wrap and inject all instances of functions with side effects such as Math.random, keyboard and mouse input
-        //maybe we can zip to streams that use random().
-        //randomStream = Rx.Observable.from([getRandom(), getRandom(), getRandom(), getRandom(), getRandom(), getRandom(), getRandom(), getRandom()]),
-
-        starStream = Rx.Observable.range(1, options.starArray.number)
-            .map(function () {
+        //todo: wrap and inject all instances of functions with side effects such as keyboard and mouse input, canvas output, canvas changes (e.g. window resize)
+        canvasAttributesStream = new Rx.BehaviorSubject({
+            //todo: replace with an observer of the canvas attributes as they are resized.
+            canvasWidth: canvasWidth,
+            canvasHeight: canvasHeight
+        }),
+        numberOfRandomPropertiesForStarStream = 3,
+        starStreamRandomizer = randomObservable.take(numberOfRandomPropertiesForStarStream * options.starArray.number)
+            .bufferWithCount(numberOfRandomPropertiesForStarStream)
+            .map(function (randomNumberArray) {
                 return {
-                    x: Math.floor(getRandom() * canvasWidth),
-                    y: Math.floor(getRandom() * canvasHeight),
-                    size: getRandom() * 3 + 1,
+                    x: randomNumberArray[0],
+                    y: randomNumberArray[1],
+                    size: randomNumberArray[2]
+                };
+            }),
+        starStream = Rx.Observable
+            .combineLatest([starStreamRandomizer, canvasAttributesStream], function (starStreamRandomized, canvasAttributesStream) {
+                return {
+                    x: Math.floor(starStreamRandomized.x * canvasAttributesStream.canvasWidth),
+                    y: Math.floor(starStreamRandomized.y * canvasAttributesStream.canvasHeight),
+                    size: starStreamRandomized.size * 3 + 1,
                     grow: true
                 };
             })
+            .take(options.starArray.number)//todo: why is this needed when starStreamRandomized will only contain this many elements?
             .toArray()
             .flatMap(function (starArray) {
                 return Rx.Observable.interval(options.starArray.speed)
@@ -301,5 +311,5 @@ StarField.getRandom = Math.random;
     canvas.width = canvasWidth;
     canvas.height = canvasHeight;
     document.body.appendChild(canvas);
-}(window, document, Rx, StarField.getRandom));
+}(window, document, Rx, Random));
 
