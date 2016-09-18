@@ -70,9 +70,10 @@
             //todo: replace with an observer of the canvas attributes as they are resized.
             canvasWidth: canvasWidth,
             canvasHeight: canvasHeight
-        }),
+        }),//hot observable
+        initialCanvasAttributes = canvasAttributesStream.take(1),//cold observable
         numberOfRandomPropertiesForStarStream = 3,
-        starStreamRandomizer = randomObservable.take(numberOfRandomPropertiesForStarStream * options.starArray.number)
+        starStreamRandomizer = randomObservable.take(numberOfRandomPropertiesForStarStream * options.starArray.number)//cold observable
             .bufferWithCount(numberOfRandomPropertiesForStarStream)
             .map(function (randomNumberArray) {
                 return {
@@ -82,18 +83,17 @@
                 };
             }),
         starStream = Rx.Observable
-            .combineLatest([starStreamRandomizer, canvasAttributesStream], function (starStreamRandomized, canvasAttributesStream) {
+            .combineLatest([starStreamRandomizer, initialCanvasAttributes], function (starStreamRandomized, canvasAttributesStream) {
                 return {
                     x: Math.floor(starStreamRandomized.x * canvasAttributesStream.canvasWidth),
                     y: Math.floor(starStreamRandomized.y * canvasAttributesStream.canvasHeight),
                     size: starStreamRandomized.size * 3 + 1,
                     grow: true
                 };
-            })
-            .take(options.starArray.number)//todo: why is this needed when starStreamRandomized will only contain this many elements?
+            })//combine 2 cold observables results in another cold observable, so take is not required here
             .toArray()
             .flatMap(function (starArray) {
-                return Rx.Observable.interval(options.starArray.speed)
+                return Rx.Observable.interval(options.starArray.speed)//hot observable
                     .map(function () {
                         starArray.forEach(starBehavior);
                         return starArray;
