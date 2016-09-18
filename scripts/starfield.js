@@ -15,7 +15,7 @@
             scoreSubject: new Rx.BehaviorSubject(0),
             context: canvas.getContext("2d"),
             starArray: {
-                speed: 40,
+                speed: 40,//40 milliseconds between frames = 25 frames per second
                 number: 250
             },
             enemyArray: {
@@ -100,6 +100,7 @@
                     });
             }),
 
+        //todo: this is really the enemyArivalStream that also creates an enemy. Use a different stream for enemy creation.
         enemyStream = Rx.Observable.interval(options.enemyArray.rate)
             .scan(function (enemyArray) {
                 enemyArray.push({
@@ -133,28 +134,30 @@
             })
             .startWith(options.spaceShip.position.start),
 
-        canvasClick = Rx.Observable.fromEvent(canvas, "click"),
+        //canvasClick = Rx.Observable.fromEvent(canvas, "click"),//triggered after both mousedown and mouseup - suggish
+        canvasMouseDown = Rx.Observable.fromEvent(canvas, "mousedown"),//triggered after mousedown - responsive, still requires mouseup between events
         spaceBarKeyDown = Rx.Observable.fromEvent(window, "keydown")
             .filter(function (event) {
                 return event.keyCode === 32;
             }),
-        bulletFiredStream = Rx.Observable.merge(canvasClick, spaceBarKeyDown)
-            .startWith({})
+        blankBullet = {},
+        bulletFiredStream = Rx.Observable.merge(canvasMouseDown, spaceBarKeyDown)
+            .startWith(blankBullet)
             .sample(options.spaceShip.firing.rate)
             .timestamp(),
         bulletStream = Rx.Observable
             .combineLatest(spaceShipPositionStream, bulletFiredStream, function (spaceShipPosition, bulletFired) {
                 return {
                     timestamp: bulletFired.timestamp,
-                    x: spaceShipPosition.x
+                    x: spaceShipPosition.x,
+                    live: bulletFired.value !== blankBullet
                 };
             })
             .distinctUntilChanged(function (bullet) {
                 return bullet.timestamp;
             })
             .scan(function (bulletArray, bullet) {
-                //todo: why does a single bullet always fire on page load?
-                bulletArray.push({x: bullet.x, y: options.spaceShip.position.start.y, timestamp: bullet.timestamp, live: true});
+                bulletArray.push({x: bullet.x, y: options.spaceShip.position.start.y, timestamp: bullet.timestamp, live: bullet.live});
                 if (bulletArray.length > options.spaceShip.bulletArray.number) {
                     bulletArray.shift();
                 }
