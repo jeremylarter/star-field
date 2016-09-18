@@ -10,8 +10,21 @@
         canvasWidth = window.innerWidth,
         canvasHeight = window.innerHeight,
         canvas = document.createElement("canvas"),
+        //todo: wrap and inject all instances of functions with side effects such as keyboard and mouse input, canvas output, canvas changes (e.g. window resize)
+        screenStream = new Rx.BehaviorSubject({
+            //todo: replace with an observer of the canvas attributes as they are resized.
+            origin: {
+                x: 0,
+                y: 0
+            },
+            canvasWidth: canvasWidth,
+            canvasHeight: canvasHeight
+        }),//hot observable
 
         options = {
+            keyCodeList: {
+                fireBullet: 32//space bar
+            },
             scoreSubject: new Rx.BehaviorSubject(0),
             context: canvas.getContext("2d"),
             starArray: {
@@ -48,30 +61,30 @@
         },
         optionsSubject = new Rx.BehaviorSubject(options),
 
-        starBehavior = function (star) {
-            if (star.y >= canvasHeight) {
-                star.y = 0;
+        getNextStar = function (star, screen) {
+            var nextStar = {
+                x: star.x,
+                y: star.y + star.size,
+                grow: star.grow
+            };
+
+            if (star.y >= screen.bottom) {
+                nextStar.y = screen.top;
             }
-            star.y += star.size;
             if (star.grow) {
-                star.size += 0.01;
+                nextStar.size = star.size + 0.01;
             } else {
-                star.size -= 0.1;
+                nextStar.size = star.size - 0.1;
             }
             if (star.size > 6) {
-                star.grow = false;
+                nextStar.grow = false;
             }
             if (star.size < 1) {
-                star.grow = true;
+                nextStar.grow = true;
             }
+
+            return nextStar;
         },
-        //todo: wrap and inject all instances of functions with side effects such as keyboard and mouse input, canvas output, canvas changes (e.g. window resize)
-        canvasAttributesStream = new Rx.BehaviorSubject({
-            //todo: replace with an observer of the canvas attributes as they are resized.
-            canvasWidth: canvasWidth,
-            canvasHeight: canvasHeight
-        }),//hot observable
-        initialCanvasAttributes = canvasAttributesStream.take(1),//cold observable
         numberOfRandomPropertiesForStarStream = 3,
         starStreamRandomizer = randomObservable.take(numberOfRandomPropertiesForStarStream * options.starArray.number)//cold observable
             .bufferWithCount(numberOfRandomPropertiesForStarStream)
@@ -82,20 +95,35 @@
                     size: randomNumberArray[2]
                 };
             }),
-        starStream = Rx.Observable
-            .combineLatest([starStreamRandomizer, initialCanvasAttributes], function (starStreamRandomized, canvasAttributesStream) {
+        initialScreenAttributes = screenStream.take(1),//cold observable
+        initialStarStream = Rx.Observable
+            .combineLatest([starStreamRandomizer, initialScreenAttributes], function (starStreamRandomized, screenAttributes) {
                 return {
-                    x: Math.floor(starStreamRandomized.x * canvasAttributesStream.canvasWidth),
-                    y: Math.floor(starStreamRandomized.y * canvasAttributesStream.canvasHeight),
+                    x: Math.floor(starStreamRandomized.x * screenAttributes.canvasWidth),
+                    y: Math.floor(starStreamRandomized.y * screenAttributes.canvasHeight),
                     size: starStreamRandomized.size * 3 + 1,
                     grow: true
                 };
-            })//combine 2 cold observables results in another cold observable, so take is not required here
+            }),//combine 2 cold observables results in another cold observable, so take is not required here
+        getNextStarArray = function (starArray, screenStream) {
+            var nextStarArray = [];
+            screenStream.take(1).subscribe(function (screen) {
+                starArray.forEach(function (star) {
+                    nextStarArray.push(getNextStar(star, {
+                        top: screen.origin.y,
+                        bottom: screen.canvasHeight
+                    }));
+                });
+            });
+            return nextStarArray;
+        },
+        starStream = initialStarStream
             .toArray()
             .flatMap(function (starArray) {
                 return Rx.Observable.interval(options.starArray.speed)//hot observable
                     .map(function () {
-                        starArray.forEach(starBehavior);
+                        starArray = getNextStarArray(starArray, screenStream);//note: we need to mutate starArray closure to persist state changes
+
                         return starArray;
                     });
             }),
@@ -134,14 +162,13 @@
             })
             .startWith(options.spaceShip.position.start),
 
-        //canvasClick = Rx.Observable.fromEvent(canvas, "click"),//triggered after both mousedown and mouseup - suggish
-        canvasMouseDown = Rx.Observable.fromEvent(canvas, "mousedown"),//triggered after mousedown - responsive, still requires mouseup between events
-        spaceBarKeyDown = Rx.Observable.fromEvent(window, "keydown")
+        canvasMouseDown = Rx.Observable.fromEvent(canvas, "mousedown"),//triggered after mousedown, still requires mouseup between events
+        fireBulletKeyDown = Rx.Observable.fromEvent(window, "keydown")
             .filter(function (event) {
-                return event.keyCode === 32;
+                return event.keyCode === options.keyCodeList.fireBullet;
             }),
         blankBullet = {},
-        bulletFiredStream = Rx.Observable.merge(canvasMouseDown, spaceBarKeyDown)
+        bulletFiredStream = Rx.Observable.merge(canvasMouseDown, fireBulletKeyDown)
             .startWith(blankBullet)
             .sample(options.spaceShip.firing.rate)
             .timestamp(),
@@ -169,8 +196,8 @@
                 return previous + current;
             }, 0),
 
-        gameStreamArray = [optionsSubject, starStream, enemyStream, enemyBulletStream, bulletStream, spaceShipPositionStream, scoreStream],
-        gameCombineLatest = function (options, starArray, enemyArray, enemyBulletArray, bulletArray, spaceShipPosition, score) {
+        gameStreamArray = [optionsSubject, starStream, enemyStream, enemyBulletStream, bulletStream, spaceShipPositionStream, scoreStream, screenStream],
+        gameCombineLatest = function (options, starArray, enemyArray, enemyBulletArray, bulletArray, spaceShipPosition, score, screen) {
             return {
                 options: options,
                 starArray: starArray,
@@ -178,7 +205,8 @@
                 enemyBulletArray: enemyBulletArray,
                 bulletArray: bulletArray,
                 spaceShipPosition: spaceShipPosition,
-                score: score
+                score: score,
+                screen: screen
             };
         },
         game = Rx.Observable.combineLatest(gameStreamArray, gameCombineLatest);
@@ -197,9 +225,9 @@
         context.fill();
     }
 
-    function paintBackground(context) {
+    function paintBackground(screen, context) {
         context.fillStyle = "#000000";
-        context.fillRect(0, 0, canvasWidth, canvasHeight);
+        context.fillRect(screen.left, screen.top, screen.right, screen.bottom);
     }
 
     function paintStars(starArray, context) {
@@ -263,12 +291,11 @@
         });
     }
 
-    function paintBullets(bulletArray, enemyArray, scoreSubject, context) {
+    function paintBullets(bulletArray, enemyArray, scoreSubject, screenTop, context) {
         bulletArray.forEach(function (bullet) {
             if (bullet.live) {
-                bullet.y -= options.spaceShip.firing.speed;//todo: convert this to frames per second so the refresh is smooth.
-                //todo: replace magic number for screen top = 0
-                if (bullet.y < 0) {
+                bullet.y -= options.spaceShip.firing.speed;
+                if (bullet.y < screenTop) {
                     bullet.live = false;
                 }
                 drawTriangle(bullet.x, bullet.y, 5, "#ffff00", true, context);
@@ -296,13 +323,19 @@
 
     function renderScene(actors) {
         var scoreSubject = actors.options.scoreSubject,
-            context = actors.options.context;
+            context = actors.options.context,
+            screen = {
+                left: actors.screen.origin.x,
+                top: actors.screen.origin.y,
+                right: actors.screen.canvasWidth,
+                bottom: actors.screen.canvasHeight
+            };
 
-        paintBackground(context);
+        paintBackground(screen, context);
         paintStars(actors.starArray, context);
         paintEnemies(actors.enemyArray, actors.enemyBulletArray, context);
         paintEnemyBullets(actors.enemyBulletArray, actors.spaceShipPosition, scoreSubject, context);
-        paintBullets(actors.bulletArray, actors.enemyArray, scoreSubject, context);
+        paintBullets(actors.bulletArray, actors.enemyArray, scoreSubject, screen.top, context);
         paintSpaceShip(actors.spaceShipPosition, context);
         paintScore(actors.score, context);
     }
