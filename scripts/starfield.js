@@ -21,6 +21,29 @@
             canvasHeight: canvasHeight
         }),//hot observable
 
+        soundContext = new(window.AudioContext || window.webkitAudioContext || window.mozAudioContext || window.oAudioContext || window.msAudioContext)(),
+        createSound = function (note, duration) {
+            var oscillator,
+                //https://en.wikipedia.org/wiki/Piano_key_frequencies
+                //todo: C ends a bit sharply and has a pop, can this be smoothed?
+                noteList = {C: 261.626, D: 293.665, E: 329.628, F: 349.228, G: 391.995, A: 440.000, B: 493.883},
+                noteFrequency = Object.prototype.hasOwnProperty.call(noteList, note)
+                    ? noteList[note]
+                    : 440;
+
+            if (!soundContext) {
+                return;
+            }
+            duration = duration || 0.15;
+            //console.log("note: " + note + ", frequency: " + noteFrequency);
+            oscillator = soundContext.createOscillator();
+            oscillator.connect(soundContext.destination);
+            oscillator.type = "sine";
+            oscillator.frequency.value = noteFrequency;
+            oscillator.start();
+            oscillator.stop(soundContext.currentTime + duration);
+        },
+
         options = {
             keyCodeList: {
                 fireBullet: 32//space bar
@@ -184,6 +207,7 @@
                 return bullet.timestamp;
             })
             .scan(function (bulletArray, bullet) {
+                createSound("C");
                 bulletArray.push({x: bullet.x, y: options.spaceShip.position.start.y, timestamp: bullet.timestamp, live: bullet.live});
                 if (bulletArray.length > options.spaceShip.bulletArray.number) {
                     bulletArray.shift();
@@ -286,6 +310,9 @@
                 if (collision(spaceShipPosition, bullet, options.spaceShip.boundingBoxSize)) {
                     bullet.live = false;
                     scoreSubject.onNext(-100);
+                    Rx.Observable.interval(150).take(3).subscribe(function () {
+                        createSound("E", 0.05);
+                    });
                 }
             }
         });
@@ -305,6 +332,7 @@
                         enemy.alive = false;
                         bullet.live = false;
                         scoreSubject.onNext(enemy.value);
+                        createSound("B", 0.1);
                     }
                 });
             }
