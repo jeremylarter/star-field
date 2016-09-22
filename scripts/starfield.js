@@ -7,21 +7,33 @@
     var getRandom = Random.getRandom,
         // getRandom = Math.random,
         randomObservable = Random.randomObservable,
-        canvasWidth = window.innerWidth,
-        canvasHeight = window.innerHeight,
         canvas = document.createElement("canvas"),
         //todo: wrap and inject all instances of functions with side effects such as keyboard and mouse input, canvas output, canvas changes (e.g. window resize)
-        screenStream = new Rx.BehaviorSubject({
-            //todo: replace with an observer of the canvas attributes as they are resized.
+        windowSizeStream = Rx.Observable.fromEvent(window, "resize"),
+        initialCanvasAttributes = {
             origin: {
                 x: 0,
                 y: 0
             },
-            canvasWidth: canvasWidth,
-            canvasHeight: canvasHeight
-        }),//hot observable
-
-        soundContext = new(window.AudioContext || window.webkitAudioContext || window.mozAudioContext || window.oAudioContext || window.msAudioContext)(),
+            canvasWidth: window.innerWidth,
+            canvasHeight: window.innerHeight
+        },
+        canvasStream = windowSizeStream
+            .startWith(initialCanvasAttributes)
+            .map(function () {
+                return {
+                    origin: {
+                        x: 0,
+                        y: 0
+                    },
+                    canvasWidth: window.innerWidth,
+                    canvasHeight: window.innerHeight
+                };
+            }),//hot observable
+        ValidAudioContext = window.AudioContext || window.webkitAudioContext || window.mozAudioContext || window.oAudioContext || window.msAudioContext,
+        soundContext = ValidAudioContext
+            ? new ValidAudioContext()
+            : undefined,
         createSound = function (note, duration) {
             var oscillator,
                 //https://en.wikipedia.org/wiki/Piano_key_frequencies
@@ -35,7 +47,6 @@
                 return;
             }
             duration = duration || 0.15;
-            //console.log("note: " + note + ", frequency: " + noteFrequency);
             oscillator = soundContext.createOscillator();
             oscillator.connect(soundContext.destination);
             oscillator.type = "sine";
@@ -56,87 +67,73 @@
             },
             enemyArray: {
                 rate: 1500,
-                boundingBoxSize: 25
+                boundingBoxSize: 30
             },
             enemyBulletArray: {
                 rate: 200,
                 number: 1000,
                 firing: {
-                    speed: 12
+                    speed: 0.012
                 }
             },
             spaceShip: {
                 position: {
                     start: {
-                        x: canvasWidth / 2,
-                        y: canvasHeight - 30
+                        x: 0.5,
+                        y: 0.9
                     }
                 },
                 firing: {
                     rate: 200,
-                    speed: 15
+                    speed: 0.015
                 },
                 bulletArray: {
                     number: 250
                 },
-                boundingBoxSize: 20
+                boundingBoxSize: 25
             }
         },
         optionsSubject = new Rx.BehaviorSubject(options),
 
-        getNextStar = function (star, screen) {
+        getNextStar = function (star) {
             var nextStar = {
                 x: star.x,
                 y: star.y + star.size,
                 grow: star.grow
             };
 
-            if (star.y >= screen.bottom) {
-                nextStar.y = screen.top;
+            if (star.y >= 1) {
+                nextStar.y = 0;
             }
             if (star.grow) {
-                nextStar.size = star.size + 0.01;
+                nextStar.size = star.size + 0.000001;
             } else {
-                nextStar.size = star.size - 0.1;
+                nextStar.size = star.size - 0.0001;
             }
-            if (star.size > 6) {
+            if (star.size > 0.006) {
                 nextStar.grow = false;
             }
-            if (star.size < 1) {
+            if (star.size < 0.001) {
                 nextStar.grow = true;
             }
 
             return nextStar;
         },
         numberOfRandomPropertiesForStarStream = 3,
-        starStreamRandomizer = randomObservable.take(numberOfRandomPropertiesForStarStream * options.starArray.number)//cold observable
+        initialStarStream = randomObservable.take(numberOfRandomPropertiesForStarStream * options.starArray.number)//cold observable
             .bufferWithCount(numberOfRandomPropertiesForStarStream)
             .map(function (randomNumberArray) {
                 return {
                     x: randomNumberArray[0],
                     y: randomNumberArray[1],
-                    size: randomNumberArray[2]
+                    size: randomNumberArray[2] * 0.005 + 0.001,
+                    grow: false
                 };
             }),
-        initialScreenAttributes = screenStream.take(1),//cold observable
-        initialStarStream = Rx.Observable
-            .combineLatest([starStreamRandomizer, initialScreenAttributes], function (starStreamRandomized, screenAttributes) {
-                return {
-                    x: Math.floor(starStreamRandomized.x * screenAttributes.canvasWidth),
-                    y: Math.floor(starStreamRandomized.y * screenAttributes.canvasHeight),
-                    size: starStreamRandomized.size * 3 + 1,
-                    grow: true
-                };
-            }),//combine 2 cold observables results in another cold observable, so take is not required here
-        getNextStarArray = function (starArray, screenStream) {
+        getNextStarArray = function (starArray) {
             var nextStarArray = [];
-            screenStream.take(1).subscribe(function (screen) {
-                starArray.forEach(function (star) {
-                    nextStarArray.push(getNextStar(star, {
-                        top: screen.origin.y,
-                        bottom: screen.canvasHeight
-                    }));
-                });
+            starArray.forEach(function (star) {
+                nextStarArray.push(getNextStar(star));
             });
             return nextStarArray;
         },
@@ -145,7 +142,7 @@
             .flatMap(function (starArray) {
                 return Rx.Observable.interval(options.starArray.speed)//hot observable
                     .map(function () {
-                        starArray = getNextStarArray(starArray, screenStream);//note: we need to mutate starArray closure to persist state changes
+                        starArray = getNextStarArray(starArray);//note: we need to mutate starArray closure to persist state changes
 
                         return starArray;
                     });
@@ -155,8 +152,8 @@
         enemyStream = Rx.Observable.interval(options.enemyArray.rate)
             .scan(function (enemyArray) {
                 enemyArray.push({
-                    x: getRandom() * canvasWidth,
-                    y: canvasHeight / 2,
+                    x: getRandom(),
+                    y: getRandom(),
                     alive: true,
                     value: 5
                 });
@@ -207,7 +204,9 @@
                 return bullet.timestamp;
             })
             .scan(function (bulletArray, bullet) {
-                createSound("C");
+                if (bullet.live) {
+                    createSound("C");
+                }
                 bulletArray.push({x: bullet.x, y: options.spaceShip.position.start.y, timestamp: bullet.timestamp, live: bullet.live});
                 if (bulletArray.length > options.spaceShip.bulletArray.number) {
                     bulletArray.shift();
@@ -220,8 +219,8 @@
                 return previous + current;
             }, 0),
 
-        gameStreamArray = [optionsSubject, starStream, enemyStream, enemyBulletStream, bulletStream, spaceShipPositionStream, scoreStream, screenStream],
-        gameCombineLatest = function (options, starArray, enemyArray, enemyBulletArray, bulletArray, spaceShipPosition, score, screen) {
+        gameStreamArray = [optionsSubject, starStream, enemyStream, enemyBulletStream, bulletStream, spaceShipPositionStream, scoreStream, canvasStream],
+        gameCombineLatest = function (options, starArray, enemyArray, enemyBulletArray, bulletArray, spaceShipPosition, score, canvas) {
             return {
                 options: options,
                 starArray: starArray,
@@ -230,7 +229,7 @@
                 bulletArray: bulletArray,
                 spaceShipPosition: spaceShipPosition,
                 score: score,
-                screen: screen
+                canvas: canvas
             };
         },
         game = Rx.Observable.combineLatest(gameStreamArray, gameCombineLatest);
@@ -254,11 +253,13 @@
         context.fillRect(screen.left, screen.top, screen.right, screen.bottom);
     }
 
-    function paintStars(starArray, context) {
+    function paintStars(starArray, screen, context) {
         //todo: can we inject a painter with generic methods so that we can switch to svg?
         context.fillStyle = "#ffffff";
         starArray.forEach(function (star) {
-            context.fillRect(star.x, star.y, star.size, star.size);
+            var average = (screen.right + screen.bottom) / 2;
+
+            context.fillRect(star.x * screen.right, star.y * screen.bottom, star.size * average, star.size * average);
         });
     }
 
@@ -272,23 +273,22 @@
         return getRandom() < chance;
     }
 
-    function paintEnemies(enemyArray, enemyBulletArray, context) {
+    function paintEnemies(enemyArray, enemyBulletArray, screen, context) {
         enemyArray.forEach(function (enemy) {
             var bulletClip = enemyBulletArray.filter(function (bullet) {
                 return bullet.live && !bullet.fired;
             });
 
             if (enemy.alive) {
-                if (enemy.y > canvasHeight) {
-                    enemy.y = -50;
+                if (enemy.y > 1) {
+                    enemy.y = -0.01;
                 }
-                enemy.y += 0.5;
+                enemy.y += 0.005;
 
                 if (bulletClip.length && decideToFire(0.1)) {
                     fireAtWill(enemy, bulletClip[0]);
                 }
-
-                drawTriangle(enemy.x, enemy.y, 25, "#00ff00", false, context);
+                drawTriangle(enemy.x * screen.right, enemy.y * screen.bottom, 25, "#00ff00", false, context);
             }
         });
     }
@@ -298,16 +298,16 @@
                 (enemy.y > bullet.y - boundingBoxSize && enemy.y < bullet.y + boundingBoxSize);
     }
 
-    function paintEnemyBullets(enemyBulletArray, spaceShipPosition, scoreSubject, context) {
+    function paintEnemyBullets(enemyBulletArray, spaceShipPosition, scoreSubject, screen, context) {
         enemyBulletArray.forEach(function (bullet) {
             if (bullet.live && bullet.fired) {
                 bullet.y += options.enemyBulletArray.firing.speed;
-                if (bullet.y > canvasHeight) {
+                if (bullet.y > 1) {
                     bullet.live = false;
                 }
-                drawTriangle(bullet.x, bullet.y, 10, "#ff1122", false, context);
+                drawTriangle(bullet.x * screen.right, bullet.y * screen.bottom, 10, "#ff1122", false, context);
 
-                if (collision(spaceShipPosition, bullet, options.spaceShip.boundingBoxSize)) {
+                if (collision({x: spaceShipPosition.x / screen.right, y: spaceShipPosition.y}, bullet, options.spaceShip.boundingBoxSize / screen.right)) {
                     bullet.live = false;
                     scoreSubject.onNext(-100);
                     Rx.Observable.interval(150).take(3).subscribe(function () {
@@ -318,17 +318,17 @@
         });
     }
 
-    function paintBullets(bulletArray, enemyArray, scoreSubject, screenTop, context) {
+    function paintBullets(bulletArray, enemyArray, scoreSubject, screen, context) {
         bulletArray.forEach(function (bullet) {
             if (bullet.live) {
                 bullet.y -= options.spaceShip.firing.speed;
-                if (bullet.y < screenTop) {
+                if (bullet.y < 0) {
                     bullet.live = false;
                 }
-                drawTriangle(bullet.x, bullet.y, 5, "#ffff00", true, context);
+                drawTriangle(bullet.x, bullet.y * screen.bottom, 5, "#ffff00", true, context);
 
                 enemyArray.forEach(function (enemy) {
-                    if (enemy.alive && collision(enemy, bullet, options.enemyArray.boundingBoxSize)) {
+                    if (enemy.alive && collision(enemy, {x: bullet.x / screen.right, y: bullet.y}, options.enemyArray.boundingBoxSize / screen.right)) {
                         enemy.alive = false;
                         bullet.live = false;
                         scoreSubject.onNext(enemy.value);
@@ -339,41 +339,66 @@
         });
     }
 
-    function paintSpaceShip(position, context) {
-        drawTriangle(position.x, position.y, 20, "#ff0000", true, context);
+    function paintSpaceShip(position, screen, context) {
+        drawTriangle(position.x, position.y * screen.bottom, 20, "#ff0000", true, context);
     }
 
-    function paintScore(score, context) {
+    function paintScore(score, screen, context) {
         context.fillStyle = "#ffffff";
         context.font = "bold 3em sans-serif";
-        context.fillText("Score: " + score, 40, 43);
+        context.fillText("Score: " + score, 0.1 * screen.right, 0.1 * screen.bottom);
     }
+
+    // function drawSquare(x1, y1, side, color, context) {
+    //     context.beginPath();
+    //     context.strokeStyle = color;
+    //     context.rect(x1 - side, y1, side + side, side);
+    //     context.stroke();
+    // }
+
+    // function paintBoundingBoxes(enemyArray, enemyBulletArray, spaceShipPosition, bulletArray, screen, context) {
+    //     var color = "#aaaaaa";
+
+    //     enemyArray.map(function (enemy) {
+    //         drawSquare(enemy.x * screen.right, enemy.y * screen.bottom, 25, color, context);
+    //     });
+    //     enemyBulletArray.map(function (enemyBullet) {
+    //         drawSquare(enemyBullet.x * screen.right, enemyBullet.y * screen.bottom, 10, color, context);
+    //     });
+    //     bulletArray.map(function (bullet) {
+    //         drawSquare(bullet.x * screen.right, bullet.y * screen.bottom, 5, "#cccccc", context);
+    //     });
+    //     drawSquare(spaceShipPosition.x * screen.right, spaceShipPosition.y * screen.bottom, 20, "#ffcccc", context);
+    // }
 
     function renderScene(actors) {
         var scoreSubject = actors.options.scoreSubject,
             context = actors.options.context,
             screen = {
-                left: actors.screen.origin.x,
-                top: actors.screen.origin.y,
-                right: actors.screen.canvasWidth,
-                bottom: actors.screen.canvasHeight
+                left: actors.canvas.origin.x,
+                top: actors.canvas.origin.y,
+                right: actors.canvas.canvasWidth,
+                bottom: actors.canvas.canvasHeight
             };
+        canvas.width = actors.canvas.canvasWidth;
+        canvas.height = actors.canvas.canvasHeight;
 
         paintBackground(screen, context);
-        paintStars(actors.starArray, context);
-        paintEnemies(actors.enemyArray, actors.enemyBulletArray, context);
-        paintEnemyBullets(actors.enemyBulletArray, actors.spaceShipPosition, scoreSubject, context);
-        paintBullets(actors.bulletArray, actors.enemyArray, scoreSubject, screen.top, context);
-        paintSpaceShip(actors.spaceShipPosition, context);
-        paintScore(actors.score, context);
+        paintStars(actors.starArray, screen, context);
+        paintEnemies(actors.enemyArray, actors.enemyBulletArray, screen, context);
+        paintEnemyBullets(actors.enemyBulletArray, actors.spaceShipPosition, scoreSubject, screen, context);
+        paintBullets(actors.bulletArray, actors.enemyArray, scoreSubject, screen, context);
+        paintSpaceShip(actors.spaceShipPosition, screen, context);
+        paintScore(actors.score, screen, context);
+        //paintBoundingBoxes(actors.enemyArray, actors.enemyBulletArray, actors.spaceShipPosition, actors.bulletArray, screen, context);
     }
 
     game
         .sample(options.starArray.speed)
         .subscribe(renderScene);
 
-    canvas.width = canvasWidth;
-    canvas.height = canvasHeight;
+    canvas.width = initialCanvasAttributes.canvasWidth;
+    canvas.height = initialCanvasAttributes.canvasHeight;
     document.body.appendChild(canvas);
 }(window, document, Rx, Random));
 
