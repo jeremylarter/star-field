@@ -1,6 +1,6 @@
 /*jslint browser:true */
 /*global window, Rx, Random*/
-
+//note: instead of inventing a refactoring to isolate side effects I have decided to use http://cycle.js.org/
 (function (window, document, Rx, Random) {
     "use strict";
 
@@ -8,7 +8,6 @@
         // getRandom = Math.random,
         randomObservable = Random.randomObservable,
         canvas = document.createElement("canvas"),
-        //todo: wrap and inject all instances of functions with side effects such as keyboard and mouse input, canvas output, canvas changes (e.g. window resize)
         windowSizeStream = Rx.Observable.fromEvent(window, "resize"),
         initialCanvasAttributes = {
             origin: {
@@ -37,7 +36,6 @@
         createSound = function (note, duration) {
             var oscillator,
                 //https://en.wikipedia.org/wiki/Piano_key_frequencies
-                //todo: C ends a bit sharply and has a pop, can this be smoothed?
                 noteList = {C: 261.626, D: 293.665, E: 329.628, F: 349.228, G: 391.995, A: 440.000, B: 493.883},
                 noteFrequency = Object.prototype.hasOwnProperty.call(noteList, note)
                     ? noteList[note]
@@ -148,17 +146,30 @@
                     });
             }),
 
-        //todo: this is really the enemyArivalStream that also creates an enemy. Use a different stream for enemy creation.
-        enemyStream = Rx.Observable.interval(options.enemyArray.rate)
-            .scan(function (enemyArray) {
-                enemyArray.push({
-                    x: getRandom(),
-                    y: getRandom(),
-                    alive: true,
+        maxNumberOfEnemies = 1000,
+        numberOfRandomPropertiesForEnemyStream = 2,
+        initialEnemyStream = randomObservable.take(maxNumberOfEnemies)//cold observable
+            .bufferWithCount(numberOfRandomPropertiesForEnemyStream)
+            .map(function (randomNumberArray) {
+                return {
+                    x: randomNumberArray[0],
+                    y: randomNumberArray[1],
+                    alive: false,
                     value: 5
-                });
-                return enemyArray;
-            }, []),
+                };
+            }),
+        enemyStream = initialEnemyStream
+            .toArray()
+            .flatMap(function (enemyArray) {
+                return Rx.Observable.interval(options.enemyArray.rate)//hot observable
+                    .map(function (index) {
+                        if (index < enemyArray.length && !enemyArray[index].alive) {
+                            enemyArray[index].alive = true;//note: we need to mutate enemyArray closure to persist state changes
+                        }
+
+                        return enemyArray;
+                    });
+            }),
 
         enemyBulletStream = Rx.Observable.interval(options.enemyBulletArray.rate)
             .scan(function (enemyBulletArray) {
@@ -254,7 +265,6 @@
     }
 
     function paintStars(starArray, screen, context) {
-        //todo: can we inject a painter with generic methods so that we can switch to svg?
         context.fillStyle = "#ffffff";
         starArray.forEach(function (star) {
             var average = (screen.right + screen.bottom) / 2;
@@ -270,6 +280,7 @@
     }
 
     function decideToFire(chance) {
+        //todo: replace getRandom() with randomObservable
         return getRandom() < chance;
     }
 
