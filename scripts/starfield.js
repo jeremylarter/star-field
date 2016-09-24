@@ -4,9 +4,7 @@
 (function (window, document, Rx, Random) {
     "use strict";
 
-    var getRandom = Random.getRandom,
-        // getRandom = Math.random,
-        randomObservable = Random.randomObservable,
+    var randomObservable = Random.randomObservable,
         canvas = document.createElement("canvas"),
         windowSizeStream = Rx.Observable.fromEvent(window, "resize"),
         initialCanvasAttributes = {
@@ -97,6 +95,7 @@
             var nextStar = {
                 x: star.x,
                 y: star.y + star.size,
+                size: star.size,
                 grow: star.grow
             };
 
@@ -104,11 +103,11 @@
                 nextStar.y = 0;
             }
             if (star.grow) {
-                nextStar.size = star.size + 0.000001;
+                nextStar.size = star.size + 0.0000025;
             } else {
-                nextStar.size = star.size - 0.0001;
+                nextStar.size = star.size - 0.00001;
             }
-            if (star.size > 0.006) {
+            if (star.size > 0.0025) {
                 nextStar.grow = false;
             }
             if (star.size < 0.001) {
@@ -124,7 +123,7 @@
                 return {
                     x: randomNumberArray[0],
                     y: randomNumberArray[1],
-                    size: randomNumberArray[2] * 0.005 + 0.001,
+                    size: randomNumberArray[2] * 0.001,
                     grow: false
                 };
             }),
@@ -146,7 +145,7 @@
                     });
             }),
 
-        maxNumberOfEnemies = 1000,
+        maxNumberOfEnemies = 100,
         numberOfRandomPropertiesForEnemyStream = 2,
         initialEnemyStream = randomObservable.take(maxNumberOfEnemies)//cold observable
             .bufferWithCount(numberOfRandomPropertiesForEnemyStream)
@@ -155,6 +154,7 @@
                     x: randomNumberArray[0],
                     y: randomNumberArray[1],
                     alive: false,
+                    canFire: true,
                     value: 5
                 };
             }),
@@ -277,11 +277,8 @@
         bullet.x = enemy.x;
         bullet.y = enemy.y;
         bullet.fired = true;
-    }
-
-    function decideToFire(chance) {
-        //todo: replace getRandom() with randomObservable
-        return getRandom() < chance;
+        enemy.canFire = false;
+        enemy.fireCoolDown = 100;
     }
 
     function paintEnemies(enemyArray, enemyBulletArray, screen, context) {
@@ -295,8 +292,14 @@
                     enemy.y = -0.01;
                 }
                 enemy.y += 0.005;
+                if (enemy.fireCoolDown) {
+                    enemy.fireCoolDown -= 1;
+                }
+                if (!enemy.canFire && enemy.fireCoolDown <= 0) {
+                    enemy.canFire = true;
+                }
 
-                if (bulletClip.length && decideToFire(0.1)) {
+                if (bulletClip.length && enemy.canFire) {
                     fireAtWill(enemy, bulletClip[0]);
                 }
                 drawTriangle(enemy.x * screen.right, enemy.y * screen.bottom, 25, "#00ff00", false, context);
@@ -341,6 +344,7 @@
                 enemyArray.forEach(function (enemy) {
                     if (enemy.alive && collision(enemy, {x: bullet.x / screen.right, y: bullet.y}, options.enemyArray.boundingBoxSize / screen.right)) {
                         enemy.alive = false;
+                        enemy.canFire = false;
                         bullet.live = false;
                         scoreSubject.onNext(enemy.value);
                         createSound("B", 0.1);
